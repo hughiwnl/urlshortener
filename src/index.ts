@@ -1,42 +1,54 @@
 import express, { Request, Response } from "express";
 import crypto from "crypto";
-import fs from "fs";
+import Database from "better-sqlite3";
 import path from "path";
 
 // --- Config ---
 
 const PORT = 3000;
 const BASE_URL = `http://localhost:${PORT}`;
-const DB_PATH = path.join(__dirname, "..", "urls.json");
+const DB_PATH = path.join(__dirname, "..", "urls.db");
 
 // --- Types ---
 
-// Each shortened URL maps a short code to an original URL + metadata
-interface UrlEntry {
-  originalUrl: string;
-  createdAt: string;
+// A row from the urls table
+interface UrlRow {
+  code: string;
+  original_url: string;
+  created_at: string;
   visits: number;
 }
-
-// The "database" is just a Record of code -> entry
-type UrlDatabase = Record<string, UrlEntry>;
 
 // Route params for /:code routes
 interface CodeParam {
   code: string;
 }
 
-// --- Database helpers (JSON file on disk) ---
+// --- Database setup (SQLite) ---
 
-function loadDb(): UrlDatabase {
-  if (!fs.existsSync(DB_PATH)) return {};
-  const raw = fs.readFileSync(DB_PATH, "utf-8");
-  return JSON.parse(raw);
-}
+const db = new Database(DB_PATH);
 
-function saveDb(db: UrlDatabase): void {
-  fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2));
-}
+// Enable WAL mode for better concurrent read performance
+db.pragma("journal_mode = WAL");
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS urls (
+    code        TEXT PRIMARY KEY,
+    original_url TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    visits      INTEGER NOT NULL DEFAULT 0
+  )
+`);
+
+// Prepare statements once for performance
+const stmts = {
+  findByUrl:    db.prepare<[string], UrlRow>("SELECT * FROM urls WHERE original_url = ?"),
+  findByCode:   db.prepare<[string], UrlRow>("SELECT * FROM urls WHERE code = ?"),
+  insert:       db.prepare("INSERT INTO urls (code, original_url, created_at, visits) VALUES (?, ?, ?, 0)"),
+  listAll:      db.prepare("SELECT * FROM urls"),
+  deleteByCode: db.prepare("DELETE FROM urls WHERE code = ?"),
+  incrementVisits: db.prepare("UPDATE urls SET visits = visits + 1 WHERE code = ?"),
+};
 
 // --- Core logic ---
 
@@ -161,33 +173,25 @@ app.post("/shorten", (req: Request, res: Response) => {
   }
 
   const normalizedUrl = normalizeUrl(url.trim());
-  const db = loadDb();
 
   // Check if this URL was already shortened
-  const existing = Object.entries(db).find(
-    ([, entry]) => entry.originalUrl === normalizedUrl
-  );
+  const existing = stmts.findByUrl.get(normalizedUrl);
   if (existing) {
     res.json({
-      shortUrl: `${BASE_URL}/${existing[0]}`,
-      code: existing[0],
+      shortUrl: `${BASE_URL}/${existing.code}`,
+      code: existing.code,
       originalUrl: normalizedUrl,
     });
     return;
   }
 
-  // Generate a unique code
+  // Generate a unique code (retry if collision)
   let code = generateCode();
-  while (db[code]) {
+  while (stmts.findByCode.get(code)) {
     code = generateCode();
   }
 
-  db[code] = {
-    originalUrl: normalizedUrl,
-    createdAt: new Date().toISOString(),
-    visits: 0,
-  };
-  saveDb(db);
+  stmts.insert.run(code, normalizedUrl, new Date().toISOString());
 
   res.status(201).json({
     shortUrl: `${BASE_URL}/${code}`,
@@ -198,61 +202,60 @@ app.post("/shorten", (req: Request, res: Response) => {
 
 // GET /stats — list all shortened URLs and their stats
 app.get("/stats", (_req: Request, res: Response) => {
-  const db = loadDb();
-  const entries = Object.entries(db).map(([code, entry]) => ({
-    shortUrl: `${BASE_URL}/${code}`,
-    code,
-    ...entry,
+  const rows = stmts.listAll.all() as UrlRow[];
+  const entries = rows.map((row) => ({
+    shortUrl: `${BASE_URL}/${row.code}`,
+    code: row.code,
+    originalUrl: row.original_url,
+    createdAt: row.created_at,
+    visits: row.visits,
   }));
   res.json(entries);
 });
 
 // GET /stats/:code — get stats for a specific short URL
 app.get("/stats/:code", (req: Request<CodeParam>, res: Response) => {
-  const db = loadDb();
-  const entry = db[req.params.code];
+  const row = stmts.findByCode.get(req.params.code);
 
-  if (!entry) {
+  if (!row) {
     res.status(404).json({ error: "Short URL not found" });
     return;
   }
 
   res.json({
-    shortUrl: `${BASE_URL}/${req.params.code}`,
-    code: req.params.code,
-    ...entry,
+    shortUrl: `${BASE_URL}/${row.code}`,
+    code: row.code,
+    originalUrl: row.original_url,
+    createdAt: row.created_at,
+    visits: row.visits,
   });
 });
 
 // DELETE /stats/:code — delete a short URL
 app.delete("/stats/:code", (req: Request<CodeParam>, res: Response) => {
-  const db = loadDb();
+  const result = stmts.deleteByCode.run(req.params.code);
 
-  if (!db[req.params.code]) {
+  if (result.changes === 0) {
     res.status(404).json({ error: "Short URL not found" });
     return;
   }
 
-  delete db[req.params.code];
-  saveDb(db);
   res.json({ message: "Deleted" });
 });
 
 // GET /:code — redirect to the original URL
 app.get("/:code", (req: Request<CodeParam>, res: Response) => {
-  const db = loadDb();
-  const entry = db[req.params.code];
+  const row = stmts.findByCode.get(req.params.code);
 
-  if (!entry) {
+  if (!row) {
     res.status(404).json({ error: "Short URL not found" });
     return;
   }
 
   // Track the visit
-  entry.visits++;
-  saveDb(db);
+  stmts.incrementVisits.run(req.params.code);
 
-  res.redirect(entry.originalUrl);
+  res.redirect(row.original_url);
 });
 
 // --- Start ---
