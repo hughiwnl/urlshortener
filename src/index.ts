@@ -1,4 +1,5 @@
 import express, { Request, Response } from "express";
+import rateLimit from "express-rate-limit";
 import crypto from "crypto";
 import Database from "better-sqlite3";
 import path from "path";
@@ -78,6 +79,20 @@ function normalizeUrl(url: string): string | null {
 
 const app = express();
 app.use(express.json());
+
+// Rate limiting: 100 requests per 15 minutes per IP (global)
+app.use(rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: { error: "Too many requests, try again later" },
+}));
+
+// Stricter limit for creating short URLs: 10 per 15 minutes per IP
+const shortenLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: "Too many URLs shortened, try again later" },
+});
 
 // GET / — serve the web UI
 app.get("/", (_req: Request, res: Response) => {
@@ -173,7 +188,7 @@ app.get("/", (_req: Request, res: Response) => {
 
 // POST /shorten — create a short URL
 // Body: { "url": "https://example.com" }
-app.post("/shorten", (req: Request, res: Response) => {
+app.post("/shorten", shortenLimiter, (req: Request, res: Response) => {
   const { url } = req.body;
 
   if (!url || typeof url !== "string") {
