@@ -1,0 +1,17 @@
+{
+  "name": "urlshortener",
+  "version": "1.0.0",
+  "description": "A simple local URL shortener for learning TypeScript",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch & node --watch dist/index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "typescript": "^5.6.0"
+  }
+}
