@@ -57,12 +57,21 @@ function generateCode(): string {
   return crypto.randomBytes(4).toString("base64url").slice(0, 6);
 }
 
-// Make sure the URL has a protocol so redirects work
-function normalizeUrl(url: string): string {
-  if (!/^https?:\/\//i.test(url)) {
-    return `https://${url}`;
+// Normalize and validate a URL. Returns the valid URL or null if invalid.
+function normalizeUrl(url: string): string | null {
+  // Add protocol if missing
+  const withProtocol = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+
+  try {
+    const parsed = new URL(withProtocol);
+    // Only allow http/https (blocks javascript:, data:, etc.)
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+    return parsed.href;
+  } catch {
+    return null;
   }
-  return url;
 }
 
 // --- Server ---
@@ -173,6 +182,11 @@ app.post("/shorten", (req: Request, res: Response) => {
   }
 
   const normalizedUrl = normalizeUrl(url.trim());
+
+  if (!normalizedUrl) {
+    res.status(400).json({ error: "Invalid URL" });
+    return;
+  }
 
   // Check if this URL was already shortened
   const existing = stmts.findByUrl.get(normalizedUrl);
