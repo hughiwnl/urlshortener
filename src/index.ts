@@ -6,9 +6,9 @@ import path from "path";
 
 // --- Config ---
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const BASE_URL = `http://localhost:${PORT}`;
-const DB_PATH = path.join(__dirname, "..", "urls.db");
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, "..", "urls.db");
 
 // --- Types ---
 

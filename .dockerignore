@@ -1,0 +1,6 @@
+node_modules
+dist
+urls.db
+urls.db-wal
+urls.db-shm
+.git
