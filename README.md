@@ -8,7 +8,7 @@ You paste in a long URL, it gives you a short one. When someone visits the short
 
 - **TypeScript** 
 - **Express**  
-- **SQLite** stores URLs on disk as a single file
+- **SQLite** - stores URLs on disk as a single file
 - **Redis** - in-memory cache making redirects faster
 - **Docker** - packages everything into containers so it runs the same on any machine
 
