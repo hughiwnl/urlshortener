@@ -1,0 +1,45 @@
+# Docker Compose lets you define and run multiple containers as a single "stack".
+# Instead of running `docker run` for each service separately, you run `docker compose up`
+# and everything starts together with networking already configured.
+
+services:
+  # --- Our URL shortener app ---
+  app:
+    # Build the Docker image from the Dockerfile in the current directory
+    build: .
+    ports:
+      # Map port 3000 on your machine to port 3000 in the container
+      # Format: "host:container"
+      - "3000:3000"
+    environment:
+      # Tell our app where to find Redis.
+      # "redis" here is the hostname — Docker Compose automatically creates a network
+      # where each service can reach the others by their service name.
+      # So "redis://redis:6379" means "connect to the redis service on port 6379".
+      - REDIS_URL=redis://redis:6379
+      # Store the SQLite database in the /app/data volume so it persists
+      - DB_PATH=/app/data/urls.db
+    volumes:
+      # Named volume for the SQLite database file.
+      # Without this, the database would be lost every time the container is removed.
+      - urlshortener-data:/app/data
+    depends_on:
+      # Wait for the Redis container to start before starting our app.
+      # Note: this only waits for the container to start, not for Redis to be "ready".
+      # That's why our app handles Redis connection failures gracefully.
+      - redis
+
+  # --- Redis cache ---
+  redis:
+    # Use the official Redis image. "7-alpine" means Redis version 7 on Alpine Linux
+    # (a tiny Linux distro that keeps the image small — ~30MB vs ~100MB for Debian).
+    image: redis:7-alpine
+    ports:
+      # Expose Redis on localhost:6379 so you can inspect it with redis-cli if needed
+      - "6379:6379"
+
+# Named volumes persist data across container restarts.
+# Docker manages the actual storage location on your machine.
+# Run `docker volume ls` to see all volumes, `docker volume inspect urlshortener-data` for details.
+volumes:
+  urlshortener-data:
